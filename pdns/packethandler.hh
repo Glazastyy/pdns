@@ -124,6 +124,8 @@ private:
   };
   bool opcodeQueryInner(DNSPacket&, queryState&);
   bool opcodeQueryInner2(DNSPacket&, queryState&, bool);
+  bool expandAliasForDNSSEC(DNSPacket& pkt, queryState& state, const DNSName& aliasTarget, const DNSName& aliasName,
+                            uint8_t aliasScopeMask, vector<DNSZoneRecord>& rrset);
   std::unique_ptr<DNSPacket> opcodeQuery(DNSPacket&, bool);
   std::unique_ptr<DNSPacket> opcodeNotify(DNSPacket&, bool);
   std::unique_ptr<DNSPacket> opcodeUpdate(DNSPacket&, bool);
@@ -152,4 +154,3 @@ private:
   UeberBackend B; // every thread has its own instance
   DNSSECKeeper d_dk; // B is shared with DNSSECKeeper
 };
-

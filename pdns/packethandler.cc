@@ -42,6 +42,7 @@
 #include "packethandler.hh"
 #include "statbag.hh"
 #include "resolver.hh"
+#include "stubresolver.hh"
 #include "communicator.hh"
 #include "dnsproxy.hh"
 #include "version.hh"
@@ -1718,6 +1719,46 @@ std::unique_ptr<DNSPacket> PacketHandler::doQuestionInner(DNSPacket& pkt)
   }
 }
 
+bool PacketHandler::expandAliasForDNSSEC(DNSPacket& pkt, queryState& state, const DNSName& aliasTarget, const DNSName& aliasName,
+                                         uint8_t aliasScopeMask, vector<DNSZoneRecord>& rrset)
+{
+  vector<DNSZoneRecord> resolvedRecords;
+  int ret1 = RCode::NoError;
+  int ret2 = RCode::NoError;
+
+  if (pkt.qtype.getCode() == QType::A || pkt.qtype.getCode() == QType::ANY) {
+    ret1 = stubDoResolve(d_slog, aliasTarget, QType::A, resolvedRecords, pkt.hasEDNSSubnet() ? &pkt.d_eso : nullptr);
+  }
+  if (pkt.qtype.getCode() == QType::AAAA || pkt.qtype.getCode() == QType::ANY) {
+    ret2 = stubDoResolve(d_slog, aliasTarget, QType::AAAA, resolvedRecords, pkt.hasEDNSSubnet() ? &pkt.d_eso : nullptr);
+  }
+
+  if (ret1 != RCode::NoError || ret2 != RCode::NoError || resolvedRecords.empty()) {
+    SLOG(g_log << Logger::Error << "Error resolving DNSSEC ALIAS for " << aliasName << " to " << aliasTarget << ", returning SERVFAIL" << endl,
+         d_slog->info(Logr::Error, "Error resolving DNSSEC ALIAS, returning SERVFAIL",
+                      "alias", Logging::Loggable(aliasName),
+                      "target", Logging::Loggable(aliasTarget),
+                      "A record query", Logging::Loggable(RCode::to_s(ret1)),
+                      "AAAA record query", Logging::Loggable(RCode::to_s(ret2)),
+                      "answers", Logging::Loggable(resolvedRecords.size())));
+    state.r->clearRecords();
+    state.r->setRcode(RCode::ServFail);
+    return false;
+  }
+
+  state.noCache = true;
+  for (auto& record : resolvedRecords) {
+    record.dr.d_name = aliasName;
+    record.dr.d_place = DNSResourceRecord::ANSWER;
+    record.domain_id = d_sd.domain_id;
+    record.scopeMask = aliasScopeMask;
+    record.auth = true;
+    rrset.push_back(std::move(record));
+  }
+
+  return true;
+}
+
 bool PacketHandler::opcodeQueryInner(DNSPacket& pkt, queryState &state)
 {
   state.r=pkt.replyPacket();  // generate an empty reply packet, possibly with TSIG details inside
@@ -1944,12 +1985,26 @@ bool PacketHandler::opcodeQueryInner2(DNSPacket& pkt, queryState &state, bool re
       weRedirected=true;
     }
 
-    if (DP && zrr.dr.d_type == QType::ALIAS && (pkt.qtype.getCode() == QType::A || pkt.qtype.getCode() == QType::AAAA || pkt.qtype.getCode() == QType::ANY) && !isPresigned()) {
+    if (zrr.dr.d_type == QType::ALIAS && (pkt.qtype.getCode() == QType::A || pkt.qtype.getCode() == QType::AAAA || pkt.qtype.getCode() == QType::ANY) && !isPresigned()) {
       if (!d_doExpandALIAS) {
         SLOG(g_log<<Logger::Info<<"ALIAS record found for "<<state.target<<", but ALIAS expansion is disabled."<<endl,
              d_slog->info(Logr::Info, "ALIAS record found, but ALIAS expansion is disabled", "query", Logging::Loggable(state.target)));
         continue;
       }
+
+      if (d_dnssec) {
+        if (!expandAliasForDNSSEC(pkt, state, getRR<ALIASRecordContent>(zrr.dr)->getContent(), state.target, zrr.scopeMask, rrset)) {
+          B.lookupEnd();
+          return true;
+        }
+        weDone = true;
+        continue;
+      }
+
+      if (!DP) {
+        continue;
+      }
+
       // DNSProxy::completePacket(), in its current state, can only process one
       // alias if !state.r->d_tcp, so ignore any further ALIAS results (but
       // warn about them)
