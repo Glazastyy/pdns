@@ -883,6 +883,9 @@ Synthesized REGEX answers are generated online and are not packet-cacheable.
 For DNSSEC zones, REGEX synthesis is only performed for online-signed zones;
 presigned zones cannot sign synthesized answers.
 
+See :doc:`guides/regex-records` for syntax, examples, DNSSEC behavior and
+operational notes.
+
 .. _setting-resolve-across-zones:
 
 ``resolve-across-zones``

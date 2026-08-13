@@ -8,10 +8,10 @@ Guides and How Tos
   recursion
   virtual-instances
   alias
+  regex-records
   svcb
   kskroll
   kskrollcdnskey
   zskroll
   algoroll
   addingrecords
-
