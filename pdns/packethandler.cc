@@ -26,6 +26,7 @@
 #include "utility.hh"
 #include "base32.hh"
 #include "base64.hh"
+#include <regex>
 #include <string>
 #include <sys/types.h>
 #include <boost/algorithm/string.hpp>
@@ -76,6 +77,7 @@ PacketHandler::PacketHandler(Logr::log_t slog) :
   d_slog = slog;
   d_doDNAME=::arg().mustDo("dname-processing");
   d_doExpandALIAS = ::arg().mustDo("expand-alias");
+  d_doRegexRecords = ::arg().mustDo("regex-records");
   d_doResolveAcrossZones = ::arg().mustDo("resolve-across-zones");
   d_logDNSDetails= ::arg().mustDo("log-dns-details");
 
@@ -745,6 +747,9 @@ void PacketHandler::computeNSECbitmap2(NSECBitmap& bitmap, const DNSName& name)
         bitmap.set(QType::A);
         bitmap.set(QType::AAAA);
       }
+    }
+    else if (d_doRegexRecords && rec.dr.d_type == QType::REGEX && !isPresigned()) {
+      continue;
     }
     else if((rec.dr.d_type == QType::DNSKEY || rec.dr.d_type == QType::CDS || rec.dr.d_type == QType::CDNSKEY) && !isPresigned() && !::arg().mustDo("direct-dnskey")) {
       continue;
@@ -1510,6 +1515,154 @@ bool PacketHandler::tryWildcard(DNSPacket& p, std::unique_ptr<DNSPacket>& r, DNS
   return true;
 }
 
+namespace
+{
+struct RegexRecordRule
+{
+  uint16_t qtype{QType::ANY};
+  string pattern;
+  string replacement;
+};
+
+bool isEscapedDelimiter(const string& text, string::size_type pos)
+{
+  size_t backslashes = 0;
+  while (pos > 0 && text.at(--pos) == '\\') {
+    ++backslashes;
+  }
+  return (backslashes % 2) == 1;
+}
+
+bool parseRegexRecordRule(string content, RegexRecordRule& rule)
+{
+  boost::trim(content);
+  if (content.size() >= 2 && content.front() == '"' && content.back() == '"') {
+    string unquoted;
+    unquoted.reserve(content.size() - 2);
+    for (string::size_type idx = 1; idx + 1 < content.size(); ++idx) {
+      if (content.at(idx) == '\\' && idx + 2 < content.size() && (content.at(idx + 1) == '"' || content.at(idx + 1) == '\\')) {
+        ++idx;
+      }
+      unquoted += content.at(idx);
+    }
+    content = std::move(unquoted);
+    boost::trim(content);
+  }
+
+  auto pos = content.find_first_of(" \t");
+  if (pos == string::npos) {
+    return false;
+  }
+
+  auto qtype = content.substr(0, pos);
+  boost::trim(qtype);
+  rule.qtype = DNSRecordContent::TypeToNumber(qtype);
+  if (rule.qtype == QType::REGEX || rule.qtype == QType::RRSIG || rule.qtype == QType::NSEC || rule.qtype == QType::NSEC3) {
+    return false;
+  }
+
+  content.erase(0, pos);
+  boost::trim_left(content);
+  if (content.size() < 3) {
+    return false;
+  }
+
+  const char delimiter = content.at(0);
+  string::size_type end = string::npos;
+  for (string::size_type idx = 1; idx < content.size(); ++idx) {
+    if (content.at(idx) == delimiter && !isEscapedDelimiter(content, idx)) {
+      end = idx;
+      break;
+    }
+  }
+  if (end == string::npos) {
+    return false;
+  }
+
+  rule.pattern = content.substr(1, end - 1);
+  rule.replacement = content.substr(end + 1);
+  boost::trim(rule.replacement);
+  return !rule.pattern.empty() && !rule.replacement.empty();
+}
+
+string regexReplaceTarget(const DNSName& target, const RegexRecordRule& rule)
+{
+  const std::regex expression(rule.pattern, std::regex::ECMAScript | std::regex::icase);
+  return std::regex_replace(target.toString(), expression, rule.replacement, std::regex_constants::format_first_only);
+}
+}
+
+bool PacketHandler::tryRegex(DNSPacket& p, std::unique_ptr<DNSPacket>& r, queryState& state, bool& retargeted)
+{
+  retargeted = false;
+  if (!d_doRegexRecords || isPresigned()) {
+    return false;
+  }
+
+  vector<DNSZoneRecord> synthesized;
+  B.lookup(QType(QType::REGEX), d_sd.qname(), d_sd.domain_id, &p);
+  DNSZoneRecord ruleRecord;
+  while (B.get(ruleRecord)) {
+    if (!ruleRecord.auth || ruleRecord.dr.d_type != QType::REGEX) {
+      continue;
+    }
+
+    auto regexContent = getRR<REGEXRecordContent>(ruleRecord.dr);
+    if (!regexContent) {
+      continue;
+    }
+
+    RegexRecordRule rule;
+    try {
+      if (!parseRegexRecordRule(regexContent->getContent(), rule)) {
+        continue;
+      }
+
+      const bool requestedType = p.qtype.getCode() == QType::ANY || p.qtype.getCode() == rule.qtype || (rule.qtype == QType::CNAME && p.qtype.getCode() != QType::CNAME);
+      if (!requestedType) {
+        continue;
+      }
+
+      const std::regex expression(rule.pattern, std::regex::ECMAScript | std::regex::icase);
+      if (!std::regex_match(state.target.toString(), expression)) {
+        continue;
+      }
+
+      DNSZoneRecord synthesizedRecord = ruleRecord;
+      synthesizedRecord.dr.d_name = state.target;
+      synthesizedRecord.dr.d_type = rule.qtype;
+      synthesizedRecord.dr.d_place = DNSResourceRecord::ANSWER;
+      synthesizedRecord.dr.setContent(DNSRecordContent::make(rule.qtype, QClass::IN, regexReplaceTarget(state.target, rule)));
+      synthesizedRecord.domain_id = d_sd.domain_id;
+      synthesizedRecord.wildcardname.clear();
+      synthesizedRecord.auth = true;
+      synthesized.push_back(std::move(synthesizedRecord));
+    }
+    catch (const std::exception& e) {
+      B.lookupEnd();
+      SLOG(g_log << Logger::Error << "Error processing REGEX record for " << state.target << ": " << e.what() << endl,
+           d_slog->info(Logr::Error, "Error processing REGEX record", "query", Logging::Loggable(state.target), "error", Logging::Loggable(e.what())));
+      r = p.replyPacket();
+      r->setRcode(RCode::ServFail);
+      return true;
+    }
+  }
+
+  if (synthesized.empty()) {
+    return false;
+  }
+
+  state.noCache = true;
+  for (auto& record : synthesized) {
+    if (record.dr.d_type == QType::CNAME && p.qtype.getCode() != QType::CNAME) {
+      state.target = getRR<CNAMERecordContent>(record.dr)->getTarget();
+      retargeted = true;
+    }
+    r->addRecord(std::move(record));
+  }
+  return true;
+}
+
 static void fillProtoZeroMessageFromDNSPacket(pdns::ProtoZero::Message& msg, DNSPacket& pkt)
 {
   struct timeval now{};
@@ -1971,6 +2124,9 @@ bool PacketHandler::opcodeQueryInner2(DNSPacket& pkt, queryState &state, bool re
     if (zrr.dr.d_type == QType::RRSIG) { // RRSIGS are added later any way.
       continue; // TODO: this actually means addRRSig should check if the RRSig is already there
     }
+    if (zrr.dr.d_type == QType::REGEX && !isPresigned()) {
+      continue;
+    }
 
     // cerr<<"Auth: "<<zrr.auth<<", "<<(zrr.dr.d_type == pkt.qtype)<<", "<<zrr.dr.d_type.toString()<<endl;
     if((pkt.qtype.getCode() == QType::ANY || zrr.dr.d_type == pkt.qtype.getCode()) && zrr.auth) {
@@ -2087,6 +2243,13 @@ bool PacketHandler::opcodeQueryInner2(DNSPacket& pkt, queryState &state, bool re
   if(rrset.empty()) {
     DLOG(SLOG(g_log<<Logger::Warning<<"Found nothing in the by-name ANY, but let's try wildcards.."<<endl,
               d_slog->info(Logr::Warning, "Found nothing in the by-name ANY, trying wildcards")));
+    bool regexRetargeted{false};
+    if (tryRegex(pkt, state.r, state, regexRetargeted)) {
+      if (regexRetargeted) {
+        state.retargeted = true;
+      }
+      return true;
+    }
     bool wereRetargeted{false};
     bool nodata{false};
     DNSName wildcard;
@@ -2145,6 +2308,9 @@ bool PacketHandler::opcodeQueryInner2(DNSPacket& pkt, queryState &state, bool re
       if (loopRR.dr.d_type == QType::ALIAS && d_doExpandALIAS && !presigned) {
         continue;
       }
+      if (loopRR.dr.d_type == QType::REGEX && d_doRegexRecords && !presigned) {
+        continue;
+      }
 #ifdef HAVE_LUA_RECORDS
       if (loopRR.dr.d_type == QType::LUA && !presigned) {
         continue;
@@ -2188,6 +2354,13 @@ bool PacketHandler::opcodeQueryInner2(DNSPacket& pkt, queryState &state, bool re
   else {
     DLOG(SLOG(g_log<<"Have some data, but not the right data"<<endl,
               d_slog->info(Logr::Debug, "Have some data, but not the right data")));
+    bool regexRetargeted{false};
+    if (tryRegex(pkt, state.r, state, regexRetargeted)) {
+      if (regexRetargeted) {
+        state.retargeted = true;
+      }
+      return true;
+    }
     makeNOError(pkt, state.r, state.target, DNSName(), 0);
   }
   return true;

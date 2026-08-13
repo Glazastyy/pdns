@@ -858,6 +858,31 @@ the server will return NODATA for A/AAAA queries for such names.
   In PowerDNS Authoritative Server 4.0.x, this setting did not exist and
   ALIAS was always expanded.
 
+.. _setting-regex-records:
+
+``regex-records``
+-----------------
+
+-  Boolean
+-  Default: no
+
+If this is enabled, REGEX records stored at the zone apex are processed as
+dynamic synthesis rules. The REGEX record content must use the form
+``TYPE /pattern/ replacement``. The pattern is matched against the absolute
+query name and capture groups can be referenced from the replacement as
+``$1``, ``$2`` and so on.
+
+For example, the REGEX content
+``A /^host-(\d+)\.example\.com\.$/ 192.0.2.$1`` synthesizes an A record for
+``host-25.example.com.`` with content ``192.0.2.25``.
+
+When adding REGEX records through the HTTP API, quote the complete rule as a
+single record content string.
+
+Synthesized REGEX answers are generated online and are not packet-cacheable.
+For DNSSEC zones, REGEX synthesis is only performed for online-signed zones;
+presigned zones cannot sign synthesized answers.
+
 .. _setting-resolve-across-zones:
 
 ``resolve-across-zones``

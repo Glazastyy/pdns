@@ -147,7 +147,8 @@ public:
     ADDR = 65400,
 #if !defined(RECURSOR)
     ALIAS = 65401,
-    LUA = 65402
+    LUA = 65402,
+    REGEX = 65403
 #endif
   };
 

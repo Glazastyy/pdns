@@ -124,6 +124,7 @@ private:
   };
   bool opcodeQueryInner(DNSPacket&, queryState&);
   bool opcodeQueryInner2(DNSPacket&, queryState&, bool);
+  bool tryRegex(DNSPacket& p, std::unique_ptr<DNSPacket>& r, queryState& state, bool& retargeted);
   bool expandAliasForDNSSEC(DNSPacket& pkt, queryState& state, const DNSName& aliasTarget, const DNSName& aliasName,
                             uint8_t aliasScopeMask, vector<DNSZoneRecord>& rrset);
   std::unique_ptr<DNSPacket> opcodeQuery(DNSPacket&, bool);
@@ -145,6 +146,7 @@ private:
   bool d_logDNSDetails;
   bool d_doDNAME;
   bool d_doExpandALIAS;
+  bool d_doRegexRecords;
   bool d_doResolveAcrossZones;
   bool d_dnssec{false};
   SOAData d_sd;

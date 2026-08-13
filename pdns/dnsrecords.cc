@@ -151,6 +151,43 @@ boilerplate_conv(PTR, conv.xfrName(d_content, true));
 boilerplate_conv(CNAME, conv.xfrName(d_content, true));
 #if !defined(RECURSOR)
 boilerplate_conv(ALIAS, conv.xfrName(d_content, false));
+
+std::shared_ptr<REGEXRecordContent::DNSRecordContent> REGEXRecordContent::make(const DNSRecord& dr, PacketReader& pr)
+{
+  return std::make_shared<REGEXRecordContent>(dr, pr);
+}
+
+REGEXRecordContent::REGEXRecordContent(const DNSRecord& dr, PacketReader& pr)
+{
+  doRecordCheck(dr);
+  pr.xfrText(d_text, true);
+}
+
+std::shared_ptr<REGEXRecordContent::DNSRecordContent> REGEXRecordContent::make(const string& zonedata)
+{
+  return std::make_shared<REGEXRecordContent>(zonedata);
+}
+
+REGEXRecordContent::REGEXRecordContent(const string& zoneData) :
+  d_text(zoneData)
+{
+}
+
+void REGEXRecordContent::toPacket(DNSPacketWriter& pw) const
+{
+  pw.xfrText(d_text, true);
+}
+
+string REGEXRecordContent::getZoneRepresentation(bool /* noDot */) const
+{
+  return d_text;
+}
+
+void REGEXRecordContent::report(const ReportIsOnlyCallableByReportAllTypes& /* unused */)
+{
+  regist(1, QType::REGEX, &REGEXRecordContent::make, &REGEXRecordContent::make, "REGEX");
+  regist(254, QType::REGEX, &REGEXRecordContent::make, &REGEXRecordContent::make, "REGEX");
+}
 #endif
 boilerplate_conv(DNAME, conv.xfrName(d_content));
 boilerplate_conv(MB, conv.xfrName(d_madname, true));
@@ -985,6 +1022,7 @@ static void reportOtherTypes(const ReportIsOnlyCallableByReportAllTypes& guard)
    DNAMERecordContent::report(guard);
 #if !defined(RECURSOR)
    ALIASRecordContent::report(guard);
+   REGEXRecordContent::report(guard);
 #endif
    SPFRecordContent::report(guard);
    NAPTRRecordContent::report(guard);

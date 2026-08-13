@@ -322,6 +322,7 @@ static void declareArguments()
   ::arg().set("security-poll-suffix", "Zone name from which to query security update notifications") = "secpoll.powerdns.com.";
 
   ::arg().setSwitch("expand-alias", "Expand ALIAS records") = "no";
+  ::arg().setSwitch("regex-records", "Process REGEX records stored at the zone apex") = "no";
   ::arg().set("outgoing-axfr-expand-alias", "Expand ALIAS records during outgoing AXFR") = "no";
   ::arg().setSwitch("resolve-across-zones", "Resolve CNAME targets and other referrals across local zones") = "yes";
   ::arg().setSwitch("8bit-dns", "Allow 8bit dns queries") = "no";

@@ -126,6 +126,19 @@ DNAME
 The DNAME record, as specified in :rfc:`6672` is supported. However,
 :ref:`setting-dname-processing` has to be set to ``yes`` for PowerDNS to process these records.
 
+.. _types-regex:
+
+REGEX
+-----
+
+REGEX is a PowerDNS-specific private record type for dynamic record synthesis.
+When :ref:`setting-regex-records` is enabled, REGEX records stored at the zone
+apex are interpreted as ``TYPE /pattern/ replacement`` rules. Matching rules
+synthesize records for the queried owner name and, for online-signed DNSSEC
+zones, the synthesized RRsets are signed before being returned.
+When adding REGEX records through the HTTP API, quote the complete rule as a
+single record content string.
+
 .. _types-ds:
 
 DS

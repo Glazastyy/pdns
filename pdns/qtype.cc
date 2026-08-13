@@ -101,6 +101,7 @@ const map<const string, uint16_t> QType::names = {
 #if !defined(RECURSOR)
   {"ALIAS", 65401},
   {"LUA", 65402},
+  {"REGEX", 65403},
 #endif
 };
 

@@ -356,6 +356,25 @@ private:
 };
 #endif
 
+#if !defined(RECURSOR)
+class REGEXRecordContent : public DNSRecordContent
+{
+public:
+  includeboilerplate(REGEX)
+
+  [[nodiscard]] const string& getContent() const
+  {
+    return d_text;
+  }
+  [[nodiscard]] size_t sizeEstimate() const override
+  {
+    return sizeof(*this) + d_text.size();
+  }
+private:
+  string d_text;
+};
+#endif
+
 class DNAMERecordContent : public DNSRecordContent
 {
 public:
