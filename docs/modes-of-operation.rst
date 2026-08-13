@@ -248,6 +248,9 @@ must be met:
 - The autoprimary must carry a SOA record for the notified domain
 - The autoprimary IP must be present in the ``supermasters`` table in the database on the secondary, along with any name that is in the NS set.
 - The set of NS records for the domain, as retrieved by the secondary from the autoprimary, must include the name that goes with the IP address in the ``supermasters`` table
+- When :ref:`setting-allow-autoprimary-ns-mismatch` is enabled, the previous NS
+  set requirement is relaxed and a configured autoprimary IP can provision the
+  zone even if its stored nameserver is absent from the remote NS set.
 - If your primary sends signed NOTIFY it will mark that TSIG key as the TSIG key used for retrieval as well
 - If you turn off :ref:`setting-allow-unsigned-autoprimary`, then your autoprimaries are required to sign their notifications.
 

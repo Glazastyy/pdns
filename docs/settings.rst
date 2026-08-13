@@ -79,6 +79,20 @@ will drop all incoming notifies.
 Turning this off requires all autoprimary notifications to be signed by
 valid TSIG signature. It will accept any existing key on secondaries.
 
+.. _setting-allow-autoprimary-ns-mismatch:
+
+``allow-autoprimary-ns-mismatch``
+---------------------------------
+
+-  Boolean
+-  Default: no
+
+When enabled, autosecondary provisioning can accept a NOTIFY from a configured
+autoprimary IP even if the NS set retrieved from that autoprimary does not
+contain the nameserver stored for that autoprimary. Other autosecondary checks,
+including :ref:`setting-allow-notify-from`, SOA retrieval and TSIG requirements,
+still apply.
+
 .. _setting-allow-unsigned-notify:
 
 ``allow-unsigned-notify``

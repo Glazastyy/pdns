@@ -733,6 +733,32 @@ bool UeberBackend::autoPrimaryBackend(const string& ipAddr, const ZoneName& doma
       return true;
     }
   }
+
+  if (!::arg().mustDo("allow-autoprimary-ns-mismatch")) {
+    return false;
+  }
+
+  for (auto& backend : backends) {
+    // Do not risk passing variant zones to variant-unaware backends.
+    if (domain.hasVariant() && (backend->getCapabilities() & DNSBackend::CAP_VIEWS) == 0) {
+      continue;
+    }
+
+    std::vector<AutoPrimary> primaries;
+    if (!backend->autoPrimariesList(primaries)) {
+      continue;
+    }
+
+    for (const auto& primary : primaries) {
+      if (primary.ip == ipAddr) {
+        *nameserver = primary.nameserver;
+        *account = primary.account;
+        *dnsBackend = backend.get();
+        return true;
+      }
+    }
+  }
+
   return false;
 }
 

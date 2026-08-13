@@ -227,9 +227,37 @@ public:
     return true;
   }
 
+  bool autoPrimaryBackend(const string& ipAddress, const ZoneName& /* domain */, const vector<DNSResourceRecord>& nsset, string* nameserver, string* account, DNSBackend** db) override
+  {
+    for (const auto& primary : s_autoprimaries.at(d_backendId)) {
+      if (primary.ip != ipAddress) {
+        continue;
+      }
+
+      for (const auto& ns : nsset) {
+        if (ns.qtype == QType::NS && primary.nameserver == ns.content) {
+          *nameserver = primary.nameserver;
+          *account = primary.account;
+          *db = this;
+          return true;
+        }
+      }
+    }
+
+    return false;
+  }
+
+  bool autoPrimariesList(std::vector<AutoPrimary>& primaries) override
+  {
+    const auto& backendPrimaries = s_autoprimaries.at(d_backendId);
+    primaries.insert(primaries.end(), backendPrimaries.begin(), backendPrimaries.end());
+    return true;
+  }
+
   /* this is not thread-safe */
   static std::unordered_map<domainid_t, ZoneStorage> s_zones;
   static std::unordered_map<domainid_t, MetaDataStorage> s_metadata;
+  static std::unordered_map<domainid_t, std::vector<AutoPrimary>> s_autoprimaries;
 
 protected:
   std::string d_suffix;
@@ -301,6 +329,7 @@ public:
 
 std::unordered_map<domainid_t, SimpleBackend::ZoneStorage> SimpleBackend::s_zones;
 std::unordered_map<domainid_t, SimpleBackend::MetaDataStorage> SimpleBackend::s_metadata;
+std::unordered_map<domainid_t, std::vector<AutoPrimary>> SimpleBackend::s_autoprimaries;
 
 class SimpleBackendFactory : public BackendFactory
 {
@@ -347,12 +376,14 @@ struct UeberBackendSetupArgFixture {
     ::arg().set("query-cache-ttl")="0";
     ::arg().set("negquery-cache-ttl")="0";
     ::arg().set("consistent-backends")="no";
+    ::arg().setSwitch("allow-autoprimary-ns-mismatch", "Allow autoprimaries to create zones even if their NS set does not include the configured autoprimary nameserver")="no";
     QC.purge();
     g_zoneCache.setRefreshInterval(0);
     g_zoneCache.clear();
     BackendMakers().clear();
     SimpleBackend::s_zones.clear();
     SimpleBackend::s_metadata.clear();
+    SimpleBackend::s_autoprimaries.clear();
   };
 };
 
@@ -549,6 +580,50 @@ BOOST_AUTO_TEST_CASE(test_simple) {
     };
     testWithoutThenWithAuthCache(testFunction);
     testWithoutThenWithZoneCache(testFunction);
+  }
+  catch(const PDNSException& e) {
+    cerr<<e.reason<<endl;
+    throw;
+  }
+  catch(const std::exception& e) {
+    cerr<<e.what()<<endl;
+    throw;
+  }
+  catch(...) {
+    cerr<<"An unexpected error occurred.."<<endl;
+    throw;
+  }
+}
+
+BOOST_AUTO_TEST_CASE(test_allow_autoprimary_ns_mismatch) {
+
+  try {
+    SimpleBackend::s_autoprimaries[1].emplace_back("192.0.2.53", "configured-ns.example.", "internal");
+
+    BackendMakers().report(std::make_unique<SimpleBackendFactory>());
+    BackendMakers().launch("SimpleBackend:1");
+    UeberBackend::go();
+
+    UeberBackend ub;
+    vector<DNSResourceRecord> nsset;
+    DNSResourceRecord ns;
+    ns.qtype = QType::NS;
+    ns.content = "remote-ns.example.";
+    nsset.push_back(ns);
+
+    string nameserver;
+    string account;
+    DNSBackend* backend{nullptr};
+    BOOST_CHECK(!ub.autoPrimaryBackend("192.0.2.53", ZoneName("example."), nsset, &nameserver, &account, &backend));
+
+    ::arg().set("allow-autoprimary-ns-mismatch") = "yes";
+    BOOST_CHECK(ub.autoPrimaryBackend("192.0.2.53", ZoneName("example."), nsset, &nameserver, &account, &backend));
+    BOOST_CHECK_EQUAL(nameserver, "configured-ns.example.");
+    BOOST_CHECK_EQUAL(account, "internal");
+    BOOST_CHECK(backend != nullptr);
+
+    backend = nullptr;
+    BOOST_CHECK(!ub.autoPrimaryBackend("198.51.100.53", ZoneName("example."), nsset, &nameserver, &account, &backend));
   }
   catch(const PDNSException& e) {
     cerr<<e.reason<<endl;
